@@ -58,6 +58,7 @@ module "eks" {
     cluster_name = local.name
     cluster_version = "1.31"
 
+    enable_irsa = false
     cluster_endpoint_public_access = true
     enable_cluster_creator_admin_permissions = true
 
