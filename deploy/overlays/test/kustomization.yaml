@@ -4,5 +4,9 @@ kind: Kustomization
 namespace: storefront-test
 
 resources:
-  - ../../base
-  - namespace.yaml
+- ../../base
+- namespace.yaml
+images:
+- name: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
+  newName: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
+  newTag: ebb4a5b61f435317b6c2c6be75eb3af1dd3f788c
