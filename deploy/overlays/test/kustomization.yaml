@@ -6,6 +6,40 @@ namespace: storefront-test
 resources:
 - ../../base
 - namespace.yaml
+
+configMapGenerator:
+  - name: storefront-config
+    behavior: merge
+    literals:
+      - APP_ENV=test
+      - LOG_LEVEL=DEBUG
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "150m"
+            memory: "128Mi"
+    target:
+      kind: Deployment
+      name: storefront-api
+  - patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+    target:
+      kind: Service
+      name: storefront-api
+
+
 images:
 - name: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
   newName: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
