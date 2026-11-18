@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: storefront-prod
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - hpa.yaml
+
+patches:
+  - path: patch-deployment.yaml
+  - patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+    target:
+      kind: Service
+      name: storefront-api
+
+images:
+  - name: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
+    newTag: v1.0.0
