@@ -65,11 +65,15 @@ module "eks" {
     vpc_id = module.vpc.vpc_id
     subnet_ids = module.vpc.private_subnets
 
+
     cluster_addons = {
         coredns = {}
         eks-pod-identity-agent = {}
         kube-proxy = {}
-        vpc-cni = {}
+        vpc-cni = {most_recent = true
+          configuration_values = jsonencode({
+            enableNetworkPolicy = "true"
+        })}
     }
 
     eks_managed_node_groups = {
@@ -90,3 +94,12 @@ module "eks" {
 
 }
 
+resource "aws_ecr_repository" "app" {
+  name                 = "storefront-api"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}

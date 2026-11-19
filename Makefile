@@ -7,18 +7,19 @@ CLUSTER_NAME ?= storefront-eks
 help: ## Show available demo and operations commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-up: ## Spin up EKS, install ArgoCD, deploy storefront-api, and print public URL
+up: ## Spin up EKS, install ArgoCD, deploy storefront-api, and trigger CI
 	@echo "==> 1/4 Provisioning AWS VPC, ECR, and EKS via Terraform..."
 	cd terraform && terraform init -input=false && terraform apply -auto-approve
 	@echo "==> 2/4 Updating local kubeconfig..."
 	aws eks update-kubeconfig --region $(AWS_REGION) --name $(CLUSTER_NAME)
-	@echo "==> 3/4 Installing ArgoCD..."
+	@echo "==> 3/4 Installing ArgoCD (v2.13.3)..."
 	kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+	kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/install.yaml
 	kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 	kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
-	@echo "==> 4/4 Registering storefront-api-test ArgoCD Application..."
+	@echo "==> 4/4 Registering storefront-api-test ArgoCD Application & triggering CI..."
 	kubectl apply -f argocd/application-test.yaml
+	-gh workflow run ci.yaml --repo Bsalarian/storefront-api 2>/dev/null || echo "Trigger CI manually in storefront-api if gh CLI is not authenticated."
 	@echo "==> Bootstrap complete. Run 'make url' in ~60s to get your public demo link."
 
 down: ## Cleanly remove K8s LoadBalancers and destroy all AWS resources
@@ -27,7 +28,7 @@ down: ## Cleanly remove K8s LoadBalancers and destroy all AWS resources
 	-kubectl delete namespace storefront-test argocd --ignore-not-found=true --timeout=120s
 	@echo "==> 2/2 Destroying Terraform-managed AWS infrastructure..."
 	cd terraform && terraform destroy -auto-approve
-	@echo "==> All AWS resources destroyed. Billing stopped."
+	@echo "==> All AWS resources destroyed. Billing stopped."I manually in storefront-api if gh CLI is not authenticated."
 
 url: ## Print the clickable public LoadBalancer URL for the interviewer
 	@HOST=$$(kubectl get svc storefront-api -n storefront-test -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null); \

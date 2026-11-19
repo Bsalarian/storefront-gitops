@@ -1,7 +1,7 @@
 # Storefront Platform — DevSecOps & GitOps Reference Architecture
 
 
-Here we have our production-grade Kubernetes platform deployment for a containerized FastAPI microservice (`storefront-api`) on AWS EKS, built with Infrastructure as Code (Terraform), Kustomize multi-environment overlays, automated Trivy vulnerability gating (GitHub Actions), and pull-based GitOps continuous delivery (ArgoCD).
+Here we have our Kubernetes platform deployment for a containerized FastAPI microservice (`storefront-api`) on AWS EKS, built with Infrastructure as Code (Terraform), Kustomize multi-environment overlays, automated Trivy vulnerability gating (GitHub Actions), and pull-based GitOps continuous delivery (ArgoCD).
 
 ## 1. Architecture & CI/CD Flow
 
@@ -85,44 +85,47 @@ storefront-gitops/
 ├── Makefile                            # Single-command cluster lifecycle & demo helpers
 └── README.md
 ```
+
+---
+
 ## 3. Running the Demo on AWS EKS
 
 ### Prerequisites
 * **AWS CLI (Command Line Interface)** configured for `eu-north-1` on an account without Service Control Policies blocking EC2 (Elastic Compute Cloud) or Elastic Load Balancing.
-* **Terraform** (`>= 1.5`) and **`kubectl`** installed locally.
+* **Terraform** (`>= 1.5`), **`kubectl`**, and optionally **`gh` (GitHub CLI)** installed locally.
 * **GitHub Secrets** set in `storefront-api`: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `GITOPS_PAT` (write access to `storefront-gitops`).
 
-### Execution Steps
+### Cluster Bootstrap & Teardown
 
-1. **Provision EKS, install ArgoCD, and register the app:**
+1. **Provision EKS, install pinned ArgoCD (`v2.13.3`), and register the app:**
    ```bash
    git clone [https://github.com/Bsalarian/storefront-gitops.git](https://github.com/Bsalarian/storefront-gitops.git)
    cd storefront-gitops
    make up
    ```
-   *Provisions the VPC (Virtual Private Cloud), EKS cluster, managed node group, Pod Identity add-on, and ECR (Elastic Container Registry) repo via Terraform, installs ArgoCD (`--server-side --force-conflicts`), and applies `argocd/application-test.yaml`.*
+   *Provisions the VPC (Virtual Private Cloud), EKS cluster, managed node group, `vpc-cni` (with NetworkPolicy enforcement enabled), `eks-pod-identity-agent`, and immutable ECR (Elastic Container Registry) repository via Terraform; installs ArgoCD `v2.13.3` via server-side apply; applies `argocd/application-test.yaml`; and triggers the initial `storefront-api` CI build.*
 
-2. **Populate the initial container image in ECR:**
-   Because `make down` destroys the ECR repository to avoid idle storage charges, a fresh `make up` starts with an empty registry. Trigger the CI workflow in `storefront-api` (**Actions -> Run workflow** or push an empty commit) so GitHub Actions builds, scans, and pushes the initial `:<git-sha>` tag and updates `deploy/overlays/test/kustomization.yaml`.
-
-3. **Check sync status and open the public demo URL:**
+2. **Check sync status and retrieve the public demo URL:**
    ```bash
    make status   # Wait until SYNC STATUS = Synced and HEALTH STATUS = Healthy
    make url      # Prints live http://<elb-hostname>[.eu-north-1.elb.amazonaws.com/](https://.eu-north-1.elb.amazonaws.com/) links
    ```
 
-4. **Inspect the ArgoCD Web UI (Optional):**
+3. **Inspect the ArgoCD Web UI (Optional):**
    ```bash
    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d && echo
    kubectl port-forward svc/argocd-server -n argocd 8443:443
    ```
-   Open `https://localhost:8443` (`admin` + printed password) to view the live dependency tree.
+   Open `https://localhost:8443` (`admin` + printed password) to view the live resource dependency tree.
 
-5. **Tear down AWS resources when done:**
+4. **Tear down AWS resources when done:**
    ```bash
    make down
    ```
-   *Deletes Kubernetes namespaces first so AWS cleanly releases the Load Balancer and security groups, then runs `terraform destroy -auto-approve`. Please do run this when finished it cost money :)*
+   *Deletes Kubernetes namespaces first so AWS cleanly releases the Load Balancer and security groups, then runs `terraform destroy -auto-approve` (including `force_delete = true` on ECR) so idle AWS billing stops immediately.*
+
+   Please do destroy after testing since it costs money :) 
+
 ---
 
 ## 4. Security Decisions & Trade-offs
@@ -147,15 +150,11 @@ The API exposes Prometheus metrics at `/metrics` via `prometheus-client`, paired
 
 ---
 ## 6. Day 2 Operations & Incident Runbook
-* **Declarative Rollback:** Identify the last healthy commit (`git log -n 5 --oneline`), run `git revert <bad-commit-sha> && git push`, and let ArgoCD roll the Deployment back to the previous immutable ECR SHA tag automatically.
-* **ArgoCD `ComparisonError`:** Run `kubectl describe application storefront-api-test -n argocd` to inspect Kustomize rendering or schema errors.
-* **`CrashLoopBackOff` with `readOnlyRootFilesystem`:** Check `kubectl logs -n storefront-test -l app=storefront-api` and ensure any scratch writes target an `emptyDir` mounted at `/tmp`.
-* **`ImagePullBackOff`:** Confirm the node IAM role has `AmazonEC2ContainerRegistryReadOnly` and verify the SHA tag exists in ECR (`aws ecr describe-images --repository-name storefront-api`).
-### Common Failure Diagnostics
-* **ArgoCD `ComparisonError` / `OutOfSync`:** Run `kubectl describe application storefront-api-test -n argocd` to inspect Kustomize rendering errors or Kubernetes API schema rejections.
-* **Pod `CrashLoopBackOff` under `readOnlyRootFilesystem`:** Check logs via `kubectl logs -n storefront-test -l app=storefront-api`. Verify `PYTHONDONTWRITEBYTECODE=1` is set and mount an `emptyDir` volume at `/tmp` if scratch storage is required.
-* **Pod `ImagePullBackOff`:** Confirm the node IAM (Identity and Access Management) role includes `AmazonEC2ContainerRegistryReadOnly` and verify the SHA tag exists in ECR (`aws ecr describe-images --repository-name storefront-api`).
 
+* **Declarative Rollback:** Identify the last healthy commit (`git log -n 5 --oneline`), run `git revert <bad-commit-sha> && git push`, and let ArgoCD roll the Deployment back to the previous immutable ECR SHA tag automatically.
+* **ArgoCD `ComparisonError`:** Run `kubectl describe application storefront-api-test -n argocd` to inspect Kustomize rendering or Kubernetes schema errors.
+* **`CrashLoopBackOff` under `readOnlyRootFilesystem`:** Check `kubectl logs -n storefront-test -l app=storefront-api` and mount an `emptyDir` volume at `/tmp` if scratch storage is required.
+* **`ImagePullBackOff`:** Confirm the node IAM role includes `AmazonEC2ContainerRegistryReadOnly` and verify the SHA tag exists in ECR (`aws ecr describe-images --repository-name storefront-api`).
 ---
 
 ## 7. What I Would Add for Production
