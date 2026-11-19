@@ -8,6 +8,12 @@ resources:
   - namespace.yaml
   - hpa.yaml
 
+configMapGenerator:
+  - name: storefront-config
+    behavior: merge
+    literals:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
 patches:
   - path: patch-deployment.yaml
   - patch: |-

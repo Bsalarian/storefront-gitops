@@ -13,3 +13,10 @@ spec:
               value: "test"
             - name: LOG_LEVEL
               value: "DEBUG"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "128Mi"              
