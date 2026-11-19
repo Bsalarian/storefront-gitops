@@ -8,39 +8,39 @@ resources:
 - namespace.yaml
 
 configMapGenerator:
-  - name: storefront-config
-    behavior: merge
-    literals:
-      - APP_ENV=test
-      - LOG_LEVEL=DEBUG
+- behavior: merge
+  literals:
+  - APP_ENV=test
+  - LOG_LEVEL=DEBUG
+  name: storefront-config
 
 patches:
-  - patch: |-
-      - op: replace
-        path: /spec/replicas
-        value: 1
-      - op: replace
-        path: /spec/template/spec/containers/0/resources
-        value:
-          requests:
-            cpu: "50m"
-            memory: "64Mi"
-          limits:
-            cpu: "150m"
-            memory: "128Mi"
-    target:
-      kind: Deployment
-      name: storefront-api
-  - patch: |-
-      - op: replace
-        path: /spec/type
-        value: LoadBalancer
-    target:
-      kind: Service
-      name: storefront-api
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 1
+    - op: replace
+      path: /spec/template/spec/containers/0/resources
+      value:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "150m"
+          memory: "128Mi"
+  target:
+    kind: Deployment
+    name: storefront-api
+- patch: |-
+    - op: replace
+      path: /spec/type
+      value: LoadBalancer
+  target:
+    kind: Service
+    name: storefront-api
 
 
 images:
 - name: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
   newName: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
-  newTag: ebb4a5b61f435317b6c2c6be75eb3af1dd3f788c
+  newTag: b6283188f63d0ec763dfd37f540e638a57311ba4
