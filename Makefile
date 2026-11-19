@@ -14,7 +14,8 @@ up: ## Spin up EKS, install ArgoCD, deploy storefront-api, and print public URL
 	aws eks update-kubeconfig --region $(AWS_REGION) --name $(CLUSTER_NAME)
 	@echo "==> 3/4 Installing ArgoCD..."
 	kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-	sed -i 's|kubectl apply -n argocd -f|kubectl apply --server-side --force-conflicts -n argocd -f|' Makefile	kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
+	kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+	kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 	kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=180s
 	@echo "==> 4/4 Registering storefront-api-test ArgoCD Application..."
 	kubectl apply -f argocd/application-test.yaml
