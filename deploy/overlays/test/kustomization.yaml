@@ -43,4 +43,4 @@ patches:
 images:
 - name: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
   newName: 155312145338.dkr.ecr.eu-north-1.amazonaws.com/storefront-api
-  newTag: b6283188f63d0ec763dfd37f540e638a57311ba4
+  newTag: e09440a918c0640bc535ab582969b472e5e4b6ff
