@@ -7,13 +7,9 @@ Here we have our Kubernetes platform deployment for a containerized FastAPI micr
 
 We enforce two-repository seperation of concerns, decided as part of our repository strategy:
 
-* **Application Repository:** [`Bsalarian/storefront-api`](https://github.com/Bsalarian/storefront-api): 
+* **Application Repository ([`Bsalarian/storefront-api`](https://github.com/Bsalarian/storefront-api)):** Contains FastAPI source code, multi-stage `Dockerfile`, and CI (Continuous Integration) workflows. Holds zero Kubernetes cluster credentials.
+* **GitOps Configuration Repository ([`Bsalarian/storefront-gitops`](https://github.com/Bsalarian/storefront-gitops)):** Single source of truth for desired cluster state. ArgoCD continuously reconciles the EKS cluster against `main`, automatically reverting configuration drift (`selfHeal: true`).
 
-    Contains FastAPI source code, multi-stage `Dockerfile`, and CI workflows. It holds zero Kubernetes cluster credentials.
-* **Infrastructure & GitOps Repository:** [`Bsalarian/storefront-gitops`](https://github.com/Bsalarian/storefront-gitops): 
-
-    Acts as the single source of truth for desired cluster state. ArgoCD continuously reconciles the EKS cluster against `main`, automatically reverting 
-    configuration drift (`selfHeal: true`).
 ```mermaid
 flowchart LR
     subgraph Dev["1. Developer"]
@@ -132,23 +128,25 @@ storefront-gitops/
 
 | Area | Implementation | Trade-off & Rationale |
 | :--- | :--- | :--- |
-| **Base Image** | Multi-stage `python:3.12-alpine` with `apk upgrade --no-cache` and `pip`/`setuptools`/`wheel` removed | **Trade-off:** Alpine uses `musl` libc instead of `glibc`, which can complicate heavy C-extension builds.<br>**Rationale:** Originally used `distroless/python3-debian12`, but Trivy flagged 45 unpatchable `HIGH` Debian OS CVEs (`libexpat1`, `libssl3`). Switching to patched Alpine dropped fixable `HIGH`/`CRITICAL` CVEs to **0** (~25 MB image). |
+| **Base Image & Trivy Gate** | Multi-stage `python:3.12-alpine` (`apk upgrade --no-cache`, `pip`/`setuptools`/`wheel` removed) + Trivy failing on `CRITICAL,HIGH` (`--ignore-unfixed`) | **Trade-off:** `--ignore-unfixed` permits upstream flaws without vendor patches yet, and Alpine uses `musl` libc instead of `glibc`.<br>**Rationale:** Originally used `distroless/python3-debian12`, but Trivy flagged 45 unpatchable `HIGH` Debian OS CVEs (`libexpat1`, `libssl3`). Switching to patched Alpine reduced fixable `HIGH`/`CRITICAL` CVEs to **0** (~25 MB image). |
 | **Pod Hardening** | `runAsNonRoot: true`, `UID 65532`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile: RuntimeDefault`, and namespace `pod-security.kubernetes.io/enforce: restricted` | **Trade-off:** App cannot write temporary files or `.pyc` bytecode caches (`PYTHONDONTWRITEBYTECODE=1` set).<br>**Rationale:** Blocks root privilege escalation, Linux capability abuse, and runtime filesystem tampering. |
-| **Identity & RBAC** | Dedicated `ServiceAccount` (`automountServiceAccountToken: false`), minimal namespace `Role`, and **EKS Pod Identity** | **Trade-off:** Pods cannot query the Kubernetes API unless a projected token is explicitly mounted.<br>**Rationale:** Prevents token theft if the app is compromised, and EKS Pod Identity avoids legacy IRSA OIDC thumbprint management. |
-| **Network Policy** | Default-deny ingress `NetworkPolicy` allowing traffic only on TCP `8080` | **Trade-off:** New consumers or sidecars require explicit ingress rules.<br>**Rationale:** Prevents lateral east-west movement from adjacent namespaces. |
-| **Secrets** | External Secrets Operator (`SecretStore` + `ExternalSecret`) using a mock provider (`deploy/secrets/externalsecret.yaml`) | **Trade-off:** Uses a fake provider in the demo instead of live AWS Secrets Manager.<br>**Rationale:** Keeps secrets out of Git while allowing a 5-line switch to `provider.aws` in production without changing Deployment manifests. |
-| **Load Balancing** | `Service` patched to `type: LoadBalancer` (Classic ELB) in `test` overlay | **Trade-off:** Lacks Layer-7 path routing and WAF integration.<br>**Rationale:** Exposes a public demo URL without needing to install the AWS Load Balancer Controller add-on, while keeping `ingress.yaml` ready in `base/`. |
----
-
-## 5. Observability Strategy
-
-The API exposes Prometheus metrics at `/metrics` via `prometheus-client`, paired with a `ServiceMonitor` (`deploy/observability/servicemonitor.yaml`) configured for 15-second scrapes:
-
-* **What is live right now (`/metrics`):** Request counters per route (`app_requests_total{endpoint="..."}`), process CPU seconds (`process_cpu_seconds_total`), resident memory (`process_resident_memory_bytes`), open file descriptors, and Python GC stats.
-* **Demo footprint trade-off:** `kube-prometheus-stack` (Prometheus + Grafana + Alertmanager) is omitted from the ephemeral demo cluster to keep worker node sizing cheap, while keeping the `ServiceMonitor` ready to plug in.
-* **Production additions:** Instrument HTTP status codes and latency histograms (`http_request_duration_seconds_bucket`) via FastAPI middleware to alert on full **RED** SLOs (5xx error rate > 1%, p99 latency > 250 ms).
+| **Identity & RBAC** | Dedicated `ServiceAccount` (`automountServiceAccountToken: false`), minimal namespace `Role`, and **EKS Pod Identity** (`eks-pod-identity-agent` add-on installed) | **Trade-off:** Pods cannot query the Kubernetes API unless a projected token is explicitly mounted, and no `aws_eks_pod_identity_association` is bound yet since the demo app is stateless.<br>**Rationale:** Prevents token theft if the app is compromised and avoids legacy IRSA OIDC thumbprint management. |
+| **Network Policy** | Default-deny ingress (TCP `8080` only) and restricted egress (DNS UDP/TCP `53` and HTTPS TCP `443`), enforced via `vpc-cni` `enableNetworkPolicy: "true"` | **Trade-off:** New consumers or outbound dependencies require explicit policy rules.<br>**Rationale:** Blocks lateral east-west movement and unauthorized outbound traffic. |
+| **Secrets** | External Secrets Operator reference (`deploy/secrets/externalsecret.yaml`) using `provider.fake` | **Trade-off:** Unapplied reference manifest; ESO is not installed by `make up` to avoid controller overhead on a stateless demo.<br>**Rationale:** Keeps secrets out of Git while enabling a 5-line switch to `provider.aws` in production. |
+| **Load Balancing & Prod Overlay** | `Service` patched to `type: LoadBalancer` (Classic ELB) in `test`; `production` overlay pins placeholder `v1.0.0` | **Trade-off:** Classic ELB lacks Layer-7 routing/WAF, and syncing `production` requires promoting a `v1.0.0` tag to ECR.<br>**Rationale:** Exposes a public demo URL without installing the AWS Load Balancer Controller add-on, while keeping `deploy/base/ingress.yaml` and `production` HPA/PDB manifests ready. |
 
 ---
+
+## 5. Observability Strategy (Application & Infrastructure)
+
+The API exposes Prometheus metrics at `/metrics` via `prometheus-client`, paired with a `ServiceMonitor` (`deploy/observability/servicemonitor.yaml`) configured for 15-second scrapes.
+
+### Application Metrics (RED Method)
+* **Rate:** `sum(rate(http_requests_total[5m])) by (endpoint)`
+* **Errors:** `sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))`
+* **Duration:** `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint))`
+
+
 ## 6. Day 2 Operations & Incident Runbook
 
 * **Declarative Rollback:** Identify the last healthy commit (`git log -n 5 --oneline`), run `git revert <bad-commit-sha> && git push`, and let ArgoCD roll the Deployment back to the previous immutable ECR SHA tag automatically.
@@ -161,10 +159,10 @@ The API exposes Prometheus metrics at `/metrics` via `prometheus-client`, paired
 
 1. **GitHub Actions OIDC Federation:** Replace static `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets with short-lived IAM roles assumed via GitHub OIDC.
 2. **AWS Load Balancer Controller + ACM + WAF:** Provision an **ALB (Application Load Balancer)** from `deploy/base/ingress.yaml`, terminate HTTPS with ACM, and attach AWS WAF rules (OWASP Top 10 + rate limiting).
-3. **Live AWS Secrets Manager:** Switch `externalsecret.yaml` from `provider.fake` to `provider.aws.service: SecretsManager` backed by an EKS Pod Identity role with rotation enabled.
+3. **Live AWS Secrets Manager + ESO:** Install External Secrets Operator via Terraform/Helm and switch `externalsecret.yaml` from `provider.fake` to `provider.aws.service: SecretsManager` backed by an `aws_eks_pod_identity_association`.
 4. **Remote Terraform State:** Store `terraform.tfstate` in an encrypted S3 bucket with versioning and state locking instead of local disk.
 5. **Image Signing & Admission Policy:** Sign images in CI with **Sigstore Cosign** and enforce signature verification at admission using **Kyverno** or **OPA Gatekeeper**.
-6. **Full Monitoring & Canary Rollouts:** Deploy `kube-prometheus-stack` for alerting and **Argo Rollouts** in `production` (`minReplicas: 3`, HPA + PDB already configured) for automated canary promotions.
+6. **Full Observability & Canary Rollouts:** Deploy `kube-prometheus-stack` + OpenTelemetry collector for alerting, and use **Argo Rollouts** in `production` (`minReplicas: 3`, HPA + PDB already configured) for automated canary promotions.
 
 ---
 
